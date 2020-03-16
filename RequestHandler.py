@@ -221,6 +221,10 @@ def read_logs_from_db(request_data):
     valid_conditions = ['userId', 'type', 'timerange']
     conditions_json = request_data.get('conditions')
     if conditions_json:
+        if not isinstance(conditions_json, dict):
+            return "conditions parameter is not a dictionary."
+        if len(conditions_json.keys()) == 0:
+            return "conditions dictionary is empty."
         for key in conditions_json.keys():
             if key not in valid_conditions:
                 return "Invalid condition(s) provided. The following conditions are permitted: userId, type, timeRange", \
