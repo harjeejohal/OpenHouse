@@ -4,3 +4,4 @@ sqlalchemy
 flask-sqlalchemy
 psycopg2
 pandas
+pg8000==1.13.2

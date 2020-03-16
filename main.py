@@ -13,19 +13,15 @@
 # limitations under the License.
 
 # [START gae_python37_app]
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import LogProcessor
-from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgres://postgres:Openhouse1!@35.222.144.141:5432/openhouse-logs'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
 
-
-@app.route('/logs', methods=['GET', 'POST'])
-def read_and_write_logs():
+@app.route('/read_logs', methods=['POST'])
+def read_logs():
     try:
         request_json = request.json
     except Exception as e:
@@ -34,17 +30,35 @@ def read_and_write_logs():
                " correctly", 400
 
     try:
-        if request.method == 'POST':
-            idempotency_key = request_json.get('idempotency_key')
-            if LogProcessor.check_for_repeated_request(idempotency_key):
-                return "This request has already been processed", 409
+        data, statuscode = LogProcessor.read_logs_from_db(request_json)
+        if statuscode == 200:
+            return jsonify(data), statuscode
+        return data, statuscode
 
-            LogProcessor.store_idempotency(idempotency_key)
-            return LogProcessor.parse_logs_and_write_to_db(request_json)
-        else:
-            return LogProcessor.read_logs_from_db(request_json)
     except Exception as e:
         return "Internal Server Error: {}".format(e), 500
+
+
+@app.route('/write_logs', methods=['POST'])
+def write_logs():
+    try:
+        request_json = request.json
+    except Exception as e:
+        print(e)
+        return "Error occurred while trying to parse the JSON of your request. Please ensure that it's been formatted" \
+               " correctly", 400
+
+    try:
+        idempotency_key = request_json.get('idempotency_key')
+        if LogProcessor.check_for_repeated_request(idempotency_key):
+            return "This request has already been processed", 409
+
+        LogProcessor.store_idempotency(idempotency_key)
+        return LogProcessor.parse_logs_and_write_to_db(request_json)
+
+    except Exception as e:
+        return "Internal Server Error: {}".format(e), 500
+
 
 @app.route('/')
 def hello():

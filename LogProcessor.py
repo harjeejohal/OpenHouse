@@ -1,11 +1,8 @@
-from main import db
 from sqlalchemy.orm import sessionmaker
 import pandas as pd
 from dateutil import parser
-from models.Log import Log
-from models.LogFailures import LogFailure
-from models.IdempotencyCheck import Idempotency
 from datetime import datetime
+from models import db_session, Log, LogFailure, Idempotency
 
 error_codes = {
     300: 'No user_id specified',
@@ -22,8 +19,8 @@ def store_idempotency(key):
     if not key:
         return
     idempotency_key = Idempotency(key)
-    db.session.add(idempotency_key)
-    db.session.commit()
+    db_session.add(idempotency_key)
+    db_session.commit()
 
 
 def check_for_repeated_request(key):
@@ -38,8 +35,8 @@ def check_for_repeated_request(key):
 
 
 def insert_data(logs):
-    db.session.bulk_save_objects(logs)
-    db.session.commit()
+    db_session.bulk_save_objects(logs)
+    db_session.commit()
 
 
 def check_and_insert_logs(logs_to_insert):
@@ -178,9 +175,7 @@ def clean_and_collapse_dataframe_to_json(df):
 
 
 def build_query_and_get_data(conditions):
-    Session = sessionmaker(bind=db.engine)
-    session = Session()
-    base_query = session.query(Log)
+    base_query = db_session.query(Log)
 
     if conditions.user_id:
         base_query = base_query.filter(Log.userId == conditions.user_id)
@@ -195,7 +190,7 @@ def build_query_and_get_data(conditions):
 
         base_query = base_query.filter(Log.time >= start_range).filter(Log.time <= end_range)
 
-    result_dataframe = pd.read_sql(base_query.statement, session.bind)
+    result_dataframe = pd.read_sql(base_query.statement, db_session.bind)
 
     return clean_and_collapse_dataframe_to_json(result_dataframe)
 
