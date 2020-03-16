@@ -13,23 +13,38 @@
 # limitations under the License.
 
 # [START gae_python37_app]
-from flask import Flask, request, jsonify
-from utils.GooglePlaceUtil import get_populartimes
+from flask import Flask, request
+import LogProcessor
+from flask_sqlalchemy import SQLAlchemy
 
-
-# If `entrypoint` is not defined in app.yaml, App Engine will look for an app
-# called `app` in `main.py`.
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgres://postgres:Openhouse1!@35.222.144.141:5432/openhouse-logs'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
 
 
-@app.route('/getPopularityData', methods=['POST'])
-def get_google_popularity_data():
-    api_key = request.args.get('api_key')
-    place_id = request.args.get('place_id')
+@app.route('/logs', methods=['GET', 'POST'])
+def read_and_write_logs():
+    try:
+        request_json = request.json
+    except Exception as e:
+        print(e)
+        return "Error occurred while trying to parse the JSON of your request. Please ensure that it's been formatted" \
+               " correctly", 400
 
-    place_metadata = get_populartimes(api_key, place_id)
-    return jsonify(place_metadata)
+    try:
+        if request.method == 'POST':
+            idempotency_key = request_json.get('idempotency_key')
+            if LogProcessor.check_for_repeated_request(idempotency_key):
+                return "This request has already been processed", 409
 
+            LogProcessor.store_idempotency(idempotency_key)
+            return LogProcessor.parse_logs_and_write_to_db(request_json)
+        else:
+            return LogProcessor.read_logs_from_db(request_json)
+    except Exception as e:
+        return "Internal Server Error: {}".format(e), 500
 
 @app.route('/')
 def hello():
