@@ -14,12 +14,17 @@
 
 # [START gae_python37_app]
 from flask import Flask, request, jsonify
-import LogProcessor
+import RequestHandler
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
+"""
+This endpoint handles retrieving the logs. As was written in the API Documentation, this endpoint accepts one top-level
+parameter: `conditions`, which is a dictionary containing all of the fields that have conditions upon them, as well
+as the conditions themselves.
+"""
 @app.route('/read_logs', methods=['POST'])
 def read_logs():
     try:
@@ -30,7 +35,7 @@ def read_logs():
                " correctly", 400
 
     try:
-        data, statuscode = LogProcessor.read_logs_from_db(request_json)
+        data, statuscode = RequestHandler.read_logs_from_db(request_json)
         if statuscode == 200:
             return jsonify(data), statuscode
         return data, statuscode
@@ -39,6 +44,10 @@ def read_logs():
         return "Internal Server Error: {}".format(e), 500
 
 
+"""
+This is the endpoint that logs are written from. It accepts two top-level parameters: idempotency_key, which is used
+to determine whether the request is a duplicate or not, and the other one is an array of Log objects, "logs".
+"""
 @app.route('/write_logs', methods=['POST'])
 def write_logs():
     try:
@@ -50,11 +59,11 @@ def write_logs():
 
     try:
         idempotency_key = request_json.get('idempotency_key')
-        if LogProcessor.check_for_repeated_request(idempotency_key):
+        if RequestHandler.check_for_repeated_request(idempotency_key):
             return "This request has already been processed", 409
 
-        LogProcessor.store_idempotency(idempotency_key)
-        return LogProcessor.parse_logs_and_write_to_db(request_json)
+        RequestHandler.store_idempotency(idempotency_key)
+        return RequestHandler.parse_logs_and_write_to_db(request_json)
 
     except Exception as e:
         return "Internal Server Error: {}".format(e), 500

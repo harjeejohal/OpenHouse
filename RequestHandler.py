@@ -1,9 +1,10 @@
-from sqlalchemy.orm import sessionmaker
 import pandas as pd
 from dateutil import parser
 from datetime import datetime
 from models import db_session, Log, LogFailure, Idempotency
 
+# These are the current error codes support by this "API"
+# Used to help keep track of the kinds of issues present in the logs being sent to be written.
 error_codes = {
     300: 'No user_id specified',
     301: 'No session_id specified',
@@ -15,6 +16,8 @@ error_codes = {
 }
 
 
+# Upon the successful completion of a write, the idempotency key associated with the request is written to a table for
+# future reference
 def store_idempotency(key):
     if not key:
         return
@@ -23,6 +26,9 @@ def store_idempotency(key):
     db_session.commit()
 
 
+# Upon the start of a write request, if there's an idempotency token associated with the request it's checked against
+# this table. If there's a match, the request returns a response immediately, to prevent it from processing a duplicaate
+# request.
 def check_for_repeated_request(key):
     if not key:
         return False
@@ -34,11 +40,17 @@ def check_for_repeated_request(key):
     return False
 
 
+# Generic method for inserting data into a table. The table to be written to is interpreted by the ORM
 def insert_data(logs):
     db_session.bulk_save_objects(logs)
     db_session.commit()
 
 
+# Checks to see how many logs have currently been flattened out during the writing phase. If the number of
+# logs stored has exceeding 10000, we write the first 10000 to the table. The reason for writing in batches is that
+# writing the entire request at once has the potential to take a long time, blocking up I/O resources. In contrast,
+# writing one entry at a time also has a lot of overhead associated with each execution. Therefore, a moderately
+# sized batch is written instead.
 def check_and_insert_logs(logs_to_insert):
     if len(logs_to_insert) > 10000:
         batch_to_write = logs_to_insert[:10000]
@@ -48,6 +60,7 @@ def check_and_insert_logs(logs_to_insert):
     return logs_to_insert
 
 
+# Generic method to increment the count of how many instances of each error code have appeared so far.
 def add_to_dict(dict_to_add, key):
     if key not in dict_to_add:
         dict_to_add[key] = 1
@@ -55,6 +68,7 @@ def add_to_dict(dict_to_add, key):
         dict_to_add[key] += 1
 
 
+# Checks the validity of an element of the "actions" array nested within each log sent from the FE.
 def check_action_body(action):
     type = action.get('type')
     time = action.get('time')
@@ -73,6 +87,8 @@ def check_action_body(action):
     return 200
 
 
+# Checks the validity of each log element in the top level "logs" array. If there are any issues, the issue's
+# corresponding status code is returned, to keep track of how many of each error occurred.
 def check_log_body(log):
     user_id = log.get('userId')
     session_id = log.get('sessionId')
@@ -96,15 +112,18 @@ def check_log_body(log):
     return 200
 
 
+# Parses the high-level fields of a log object into a tuple
 def parse_high_level(log):
     return log.get('userId'), log.get('sessionId'), log.get('actions')
 
 
+# Builds a Log model object using the data from the request body. This is used to leverage Flask's ORM capabilities
 def log_builder(action, user_id, session_id):
     action['time'] = parser.isoparse(action['time'])
     return Log(user_id, session_id, action['time'], action['type'], action['properties'])
 
 
+# Used to insert into the log_failures table, which keeps track of formatting issues that have occurred.
 def build_and_insert_errors(error_counts, error_type):
     log_failures_list = []
     for key in error_counts.keys():
@@ -114,6 +133,8 @@ def build_and_insert_errors(error_counts, error_type):
     insert_data(log_failures_list)
 
 
+# Flattens the structure of the request provided to the write endpoint, checks the validity of its contents, and then
+# writes out the results in batches. Also writes any parsing errors that have occurred during this process.
 def parse_logs_and_write_to_db(request_data):
     logs_json = request_data.get('logs')
     if not logs_json:
@@ -152,9 +173,12 @@ def parse_logs_and_write_to_db(request_data):
            "errors that may have occurred.", 200
 
 
+# During a read, the data is read into a dataframe. Here, any duplicates are collapsed out. The dataframe is then
+# tweaked to return to return a list of Log objects with an identical format to the one specified in the API
+# requirements
 def clean_and_collapse_dataframe_to_json(df):
     df.drop_duplicates(subset=['user_id', 'session_id', 'time', 'type'], inplace=True)
-    df['time'] = df['time'].map(lambda x: datetime.strftime(x, '%Y-%m-%dT%H:%M:%S+0000'))
+    df['time'] = df['time'].map(lambda x: datetime.strftime(x, '%Y-%m-%dT%H:%M:%S+00:00'))
 
     merged_df = df.drop(['time', 'type', 'properties'], axis=1).assign(action_items=
                                                                        df[['time', 'type', 'properties']].agg(
@@ -174,6 +198,8 @@ def clean_and_collapse_dataframe_to_json(df):
     return {'logs': logs}
 
 
+# Builds the query to retrieve the logs from the database. The conditions are appended based on whether the
+# corresponding key for that condition existed in the "conditions" parameter passed into the request
 def build_query_and_get_data(conditions):
     base_query = db_session.query(Log)
 
@@ -195,7 +221,8 @@ def build_query_and_get_data(conditions):
     return clean_and_collapse_dataframe_to_json(result_dataframe)
 
 
-def validate_conditions(conditions):
+# Validates the requirements laid out for the conditions.timerange parameter. Consult the API docs for more info.
+def validate_timerange_condition(conditions):
     timestamp_condition = conditions.timerange
     if timestamp_condition and not isinstance(timestamp_condition, list):
         return "The timerange parameter must be in the form of a list, containing the start and end timestamps", 400
@@ -217,6 +244,7 @@ def validate_conditions(conditions):
     return "Valid", 200
 
 
+# This method is called by the controller method for reading logs.
 def read_logs_from_db(request_data):
     valid_conditions = ['userId', 'type', 'timerange']
     conditions_json = request_data.get('conditions')
@@ -231,7 +259,7 @@ def read_logs_from_db(request_data):
                        400
 
         conditions = Conditions(conditions_json)
-        message, status_code = validate_conditions(conditions)
+        message, status_code = validate_timerange_condition(conditions)
         if status_code >= 300:
             return message, status_code
 
@@ -241,6 +269,7 @@ def read_logs_from_db(request_data):
     return "No conditions provided. Please provide at least one.", 400
 
 
+# An object used to represent the conditions parameter
 class Conditions(object):
     def __init__(self, conditions_json):
         self.user_id = conditions_json.get('userId')

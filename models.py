@@ -3,6 +3,7 @@ import sqlalchemy
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session
 
+# Builds an engine that's connect to the remote postgresql instance
 db = sqlalchemy.create_engine(
     # Equivalent URL:
     # postgres+pg8000://<db_user>:<db_pass>@/<db_name>?unix_sock=/cloudsql/<cloud_sql_instance_name>/.s.PGSQL.5432
@@ -18,10 +19,12 @@ db = sqlalchemy.create_engine(
     )
 )
 
+# Used to map the model classes to the db object
 Base = declarative_base()
 db_session = Session(bind=db, autocommit=False, autoflush=False)
 
 
+# This class is used to represent the flattened version of a log.
 class Log(Base):
     __tablename__ = "logs"
 
@@ -30,7 +33,7 @@ class Log(Base):
     time = Column('time', DateTime)
     userId = Column('user_id', String())
     type = Column('type', String())
-    properties = Column('properties', JSON)
+    properties = Column('properties', JSON, nullable=True)
 
     def __init__(self, user_id, session_id, time, action_type, properties):
         self.sessionId = session_id
@@ -52,6 +55,9 @@ class Log(Base):
         }
 
 
+# This class is used to represent the "LogFailure" object, which contains information regarding the kinds of validation
+# errors that were encountered during the process of parsing the JSON, how many of each error occurred, and which stage
+# they occurred during.
 class LogFailure(Base):
     __tablename__ = "log_failures"
 
@@ -79,6 +85,8 @@ class LogFailure(Base):
         }
 
 
+# This class is used to represent the information in the idempotency table. The only information recorded is the
+# idempotency keys themselves
 class Idempotency(Base):
     __tablename__ = "idempotency"
 
